@@ -50,11 +50,15 @@ int check_cache_range(unsigned long start, unsigned long stop)
 {
 	int ok = 1;
 
-	if (start & (CONFIG_SYS_CACHELINE_SIZE - 1))
+	if (start & (CONFIG_SYS_CACHELINE_SIZE - 1)) {
+	    printf("Refusing to clean because of start addr %lx\n", start);
 		ok = 0;
+    }
 
-	if (stop & (CONFIG_SYS_CACHELINE_SIZE - 1))
+	if (stop & (CONFIG_SYS_CACHELINE_SIZE - 1)) {
+	    printf("Refusing to clean because of end addr %lx\n", stop);
 		ok = 0;
+	}
 
 	if (!ok) {
 		warn_non_spl("CACHE: Misaligned operation at range [%08lx, %08lx]\n",

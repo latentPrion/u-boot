@@ -12,7 +12,7 @@
  * warranties of merchantability and fitness for a particular
  * purpose.
  */
-
+#define DEBUG
 #include <common.h>
 #include <command.h>
 #include <elf.h>
@@ -47,7 +47,26 @@ static unsigned long load_elf_image_phdr(unsigned long addr)
 		if (phdr->p_filesz != phdr->p_memsz)
 			memset(dst + phdr->p_filesz, 0x00,
 			       phdr->p_memsz - phdr->p_filesz);
-		flush_cache((unsigned long)dst, phdr->p_filesz);
+
+        uintptr_t aligned_dst_addr = (uintptr_t)dst;
+	    if (aligned_dst_addr & (CONFIG_SYS_CACHELINE_SIZE - 1)) {
+	        /* Fix up the start addr before passing it to flush_cache() */
+            debug("Aligning dest addr from %p to %lx.\n", dst, aligned_dst_addr);
+	        aligned_dst_addr &= ~(CONFIG_SYS_CACHELINE_SIZE - 1);
+	    }
+
+	    uintptr_t aligned_end_addr = (uintptr_t)aligned_dst_addr + phdr->p_filesz;
+	    uintptr_t aligned_phdr_sz = phdr->p_filesz;
+	    if (aligned_end_addr & (CONFIG_SYS_CACHELINE_SIZE - 1)) {
+	         /* Fix up the end addr too. */
+             debug("Aligning phdr_sz addr from %x to %lx.\n", phdr->p_filesz, aligned_phdr_sz);
+	         aligned_phdr_sz += CONFIG_SYS_CACHELINE_SIZE;
+	         aligned_phdr_sz &= ~(CONFIG_SYS_CACHELINE_SIZE - 1);
+	    }
+
+        debug("Cleaning from %lx, with %lx bytes.\n",
+              aligned_dst_addr, aligned_phdr_sz);
+		flush_cache((unsigned long)aligned_dst_addr, aligned_phdr_sz);
 		++phdr;
 	}
 
@@ -97,7 +116,24 @@ static unsigned long load_elf_image_shdr(unsigned long addr)
 			memcpy((void *)(uintptr_t)shdr->sh_addr,
 			       (const void *)image, shdr->sh_size);
 		}
-		flush_cache(shdr->sh_addr, shdr->sh_size);
+
+        uintptr_t aligned_flush_start = shdr->sh_addr;
+        if (aligned_flush_start & (CONFIG_SYS_CACHELINE_SIZE - 1)) {
+            aligned_flush_start &= ~(CONFIG_SYS_CACHELINE_SIZE - 1);
+            debug("Aligning start from %x to %lx.\n",
+                  shdr->sh_addr, aligned_flush_start);
+        }
+
+        uintptr_t aligned_flush_size = shdr->sh_size;
+        uintptr_t aligned_flush_end = aligned_flush_start + aligned_flush_size;
+        if (aligned_flush_end & (CONFIG_SYS_CACHELINE_SIZE - 1)) {
+            aligned_flush_size += CONFIG_SYS_CACHELINE_SIZE;
+            aligned_flush_size &= ~(CONFIG_SYS_CACHELINE_SIZE - 1);
+            debug("Aligning size from from %x to %lx.\n",
+                  shdr->sh_size, aligned_flush_size);
+        }
+
+		flush_cache(aligned_flush_start, aligned_flush_size);
 	}
 
 	return ehdr->e_entry;
@@ -171,10 +207,14 @@ int do_bootelf(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 	if (!valid_elf_image(addr))
 		return 1;
 
-	if (sload && sload[1] == 'p')
+	if ((sload && sload[1] == 'p')) {
+        printf("Loading ELF using program headers.\n");
 		addr = load_elf_image_phdr(addr);
-	else
+	}
+	else {
+	    printf("Loading ELF using section headers.\n");
 		addr = load_elf_image_shdr(addr);
+	}
 
 	if (ep && !strcmp(ep, "no"))
 		return rcode;
